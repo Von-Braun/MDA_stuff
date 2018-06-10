@@ -1,0 +1,228 @@
+;Some basic delay routines
+DELAY_LONG:     .equ 0597h
+DELAY:            .equ 0589h
+
+; IO addresses and pin connections used:
+; ffe0 - I/O address for memory write / read
+; ffe1 - I/O address for port write / read
+; ffe2 - write to low address register
+; ffe3 - write to high address register
+;Card`s IRQ7 - leave unconnected
+;Some signals are terminated:
+;
+;A12,A13,A14,A15,A18,AEN = GND
+;A16,A17,A19 = +5V
+;
+
+; *** MAIN LOOP ***
+    .org 0d000h
+    
+start:
+        
+        call port_setup ; initiate MDA board
+        call registers_init
+
+repeat:    
+        
+        call clear_screen
+        
+        ld ix,test_string1
+        ld hl,0
+        call line_write
+        
+        jp 0000
+
+    ; *** SUBROUTINES ***    
+
+port_setup:
+    ; Seting up control port of 6845 CRT controller on MDA card (address 3b8h)
+    ; According to "IBM Monochrome Display and Prnter Adapter" hardware reference manual
+    ; this must be done before anything else.
+    ; value "29h" means: 
+    ; High resolution mode: ON, Video Enable: ON, Enable Blink: ON
+     
+        ld bc,0ffe3h ; ffe3 - write to high address register
+        ld a,03h
+        out (c),a
+        
+        ld bc,0ffe2h ; ffe2 - write to low address register
+        ld a,0b8h
+        out (c),a
+        
+        ld bc,0ffe1h ; ffe1 - I/O address for port write / read
+        ld a,29h
+        out (c),a
+        
+        ret
+
+
+registers_init:
+    ; Bulk initialization of 6845 CRT controller`s registers
+    ; 16 registers has to be initialised with fixed values
+    ; recommended by IBM`s hadware manual for MDA card.
+    ; Registers are selected by "Index Register" (3b4h)
+    ; Values are entered to "Data Register" (3b5h)
+
+        ld ix,init_data
+        ld d,10h
+        
+loop_regs:
+        dec d ; goto next register starting at fh
+        ld a,(ix) ; load init_data[offset] into a, offset sarts at 0
+        ld e,a ;load a into e(value to be placed in register)
+        call reg_write ;write e to register d in MDA card
+        inc ix ;offset+=1
+        ld a,0 ;place 0 in a
+        cp d ; a-d sets flags, a is unaffected
+        jr nz,loop_regs ;if d is not zero, goto next register
+        ret
+
+
+reg_write:
+    ; writing value to 6845 register.
+    ;Entry:
+    ;
+    ; D - register number
+    ; E - value
+        
+        ld bc,0ffe3h ; ffe3 - write to high address register          ;select register
+        ld a,03h
+        out (c),a
+        
+        ld bc,0ffe2h ; ffe2 - write to low address register
+        ld a,0b4h
+        out (c),a
+        
+        ld bc,0ffe1h ; ffe1 - I/O address for port write / read
+        ld a,d
+        out (c),a
+                
+        ld bc,0ffe3h ; ffe3 - write to high address register          ;write value to selected register
+        ld a,03h
+        out (c),a
+        
+        ld bc,0ffe2h ; ffe2 - write to low address registe
+        ld a,0b5h
+        out (c),a
+        
+        ld bc,0ffe1h ; ffe1 - I/O address for port write / read
+        ld a,e
+        out (c),a        
+        ret
+
+
+line_write:
+    ;Write ASCIIZ buffer to MDA card`s video buffer. Assuming "normal" attribute.
+    ;Entry:
+    ;
+    ; HL = Video RAM position - even address, counted from 0
+    ; IX = Start of ASCIIZ buffer of data
+        ld bc,0ffe3h ; ffe3 - write to high address register        ;write charecter
+        ld a,h
+        out (c),a
+        
+        ld bc,0ffe2h ; ffe2 - write to low address register
+        ld a,l
+        out (c),a
+        
+        ld b,0 ; load 0 into b
+        ld a,(ix) ;loads the value pointed to by ix into a
+        cp b ; a-b sets flags, a is unaffected
+        ret z ; if zero the top stack entry is popped into pc
+        
+        ld bc,0ffe0h ; ffe0 - I/O address for memory write / read
+        out (c),a ; value of a is written to port c
+        inc hl ; inc hl as one 16bit reg
+        
+        ld bc,0ffe3h ; ffe3 - write to high address register             ;write attribute
+        ld a,h
+        out (c),a
+        
+        ld bc,0ffe2h ; ffe2 - write to low address register
+        ld a,l
+        out (c),a
+        
+        ld bc,0ffe0h ; ffe0 - I/O address for memory write / read
+        ld a,07h    ;normal attribute
+        out (c),a
+
+        inc hl ; increment address in video ram
+        inc ix ; increment charecter pointer
+        jp line_write
+
+clear_screen:
+    ;Fills the 4K video RAM with zeros
+
+        ld hl,0f9fh ; load value into hl
+        
+continue_clear_screen:
+
+        
+        ld bc,0ffe3h ; ffe3 - write to high address register
+        ld a,h
+        out (c),a
+
+        ld bc,0ffe2h ; ffe2 - write to low address register
+        ld a,l
+        out (c),a
+
+        ld bc,0ffe0h ; ffe0 - I/O address for memory write / read
+        ld a,0            ;attribute
+        out (c),a
+        
+        dec hl
+        
+        ld bc,0ffe3h ; ffe3 - write to high address register
+        ld a,h
+        out (c),a
+
+        ld bc,0ffe2h ; ffe2 - write to low address register
+        ld a,l
+        out (c),a
+
+        ld bc,0ffe0h ; ffe0 - I/O address for memory write / read
+        ld a,0            ;empty char
+        out (c),a
+
+
+        ld a,h ; load h into a
+        or l ; or a(has value of h) with l
+        ret z ; finish if the answer was zero, aka finish if both h and l are zero
+        jp continue_clear_screen
+
+    ;Fixed 6845 register values - taken from 
+    ;"IBM Monochrome Display and Printer Adapter" 
+    ;Hardware reference manual.
+init_data:
+    .db 0,0,0,0,0ch,0bh,0dh,02h,19h,19h,06h,19h,0fh,52h,50h,61h    
+
+    ;Example text to be displayed
+test_string1:
+   ;.db "--------------------------------------------------------------------------------"
+    .db "             *     ,MMM8&&&.            *                                       "
+    .db "                  MMMM88&&&&&    .                     MDA/Herc. Demo for C-Z80 "
+    .db "                 MMMM88&&&&&&&                         Computer. Full I/O       "
+    .db "     *           MMM88&&&&&&&&                         and video memory (32KB)  "
+    .db "                 MMM88&&&&&&&&                         access trough Z80        "
+    .db "                 'MMM88&&&&&&'                         I/O address space.       "
+    .db "                   'MMM8&&&'      *                                             "
+    .db "          |\\___/|                                                               "
+    .db "          )     (             .              .                                  "
+    .db "         =\\     /=                                                              "
+    .db "           )===(       *                                                        "
+    .db "          /     \\                                                               "
+    .db "          |     |                                                               "
+    .db "         /       \\                                                              "
+    .db "         \\       /                                                              "
+    .db "  _/\\_/\\_/\\__  _/_/\\_/\\_/\\_/\\_/\\_/\\_/\\_/\\_/\\_                                   "
+    .db "  |  |  |  |( (  |  |  |  |  |  |  |  |  |  |                                   "
+    .db "  |  |  |  | ) ) |  |  |  |  |  |  |  |  |  |                                   "
+    .db "  |  |  |  |(_(  |  |  |  |  |  |  |  |  |  |                                   "
+    .db "  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |                                   "
+    .db "  jgs|  |  |  |  |  |  |  |  |  |  |  |  |  |                                   "
+    .db "                                                                                "
+    .db " 8-bit ISA video card interface is a part of CP/M Compatibility Card for        "
+    .db " C-Z80 Computer. The card also implements cold/warm reset and 32/64KB RAM       "
+    .db " bankswitching circuits.                               (c) 2016 Michal Cierniak "
+    .db 0
+    .END

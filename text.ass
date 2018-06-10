@@ -1,0 +1,266 @@
+;Some basic delay routines
+DELAY_LONG:     .equ 0597h
+DELAY:            .equ 0589h
+
+; IO addresses and pin connections used:
+; 
+; 0ffd0h - 8255 base address in C-Z80 system
+; 0ffd3h - 8255 control register
+; 0ffd0h - PORT A (connected to lower address lines of MDA card A0 - A7)
+; 0ffd1h - PORT B (connected to data lines of MDA card)
+; 0ffd2h - PORT C (connected to upper addres lines of MDA card , and to control lines:
+;                  C0=A8 PC1=A9, PC2=A10, PC3=A11, PC4=/MEMR PC5=/MEMW PC6=/IOR PC7=/IOW)
+;The MDA card is also connected to +5V, GND and also positive RESET source.
+;Card`s IRQ7, I/O CH RDY are not used here - leave unconnected
+;Some signals are terminated:
+;
+;A12,A13,A14,A15,A18,AEN = GND
+;A16,A17,A19 = +5V
+;
+
+; *** MAIN LOOP ***
+    .org 0d000h
+    
+    start:
+        
+        call init_8255
+        call port_setup
+        call registers_init
+
+    repeat:    
+        
+        call clear_screen
+        
+        ld ix,test_string1
+        ld hl,0
+        call line_write
+        
+        call DELAY_LONG
+        call DELAY_LONG
+        call DELAY_LONG
+        call DELAY_LONG
+        
+        jp repeat
+
+    ; *** SUBROUTINES ***    
+
+    init_8255:
+    ; Basic inititalisation of 8255 chip:
+    ; All ports as output, mode 0, 
+    ; port C = f0h (to set all control signals of MDA card to logic "1")
+
+        ld bc,0ffd3h
+        ld a,80h
+        out (c),a
+        ld bc,0ffd2h
+        ld a,0f0h
+        out (c),a
+        ret
+
+    port_setup:
+    ; Seting up control port of 6845 CRT controller on MDA card (address 3b8h)
+    ; According to "IBM Monochrome Display and Prnter Adapter" hardware reference manual
+    ; this must be done before anything else.
+    ; value "29h" means: 
+    ; High resolution mode: ON, Video Enable: ON, Enable Blink: ON
+     
+        ld bc,0ffd2h
+        ld a,0f3h
+        out (c),a
+        
+        ld bc,0ffd0h
+        ld a,0b8h
+        out (c),a
+        
+        ld bc,0ffd1h
+        ld a,29h
+        out (c),a    
+        call io_write
+        ret
+
+
+    registers_init:
+    ; Bulk initialization of 6845 CRT controller`s registers
+    ; 16 registers has to be initialised with fixed values
+    ; recommended by IBM`s hadware manual for MDA card.
+    ; Registers are selected by "Index Register" (3b4h)
+    ; Values are entered to "Data Register" (3b5h)
+
+        ld ix,init_data
+        ld d,10h
+        
+    loop_regs:
+        dec d
+        ld a,(ix)
+        ld e,a
+        call reg_write
+        inc ix
+        ld a,0
+        cp d
+        jr nz,loop_regs
+        ret
+
+
+    reg_write:
+    ; writing value to 6845 register.
+    ;Entry:
+    ;
+    ; D - register number
+    ; E - value
+        
+        ld bc,0ffd2h 
+        ld a,0f3h
+        out (c),a
+        ld bc,0ffd0h 
+        ld a,0b4h
+        out (c),a
+        ld bc,0ffd1h 
+        ld a,d
+        out (c),a    
+        call io_write 
+        ld bc,0ffd0h
+        ld a,0b5h 
+        out (c),a
+        ld bc,0ffd1h; 
+        ld a,e 
+        out (c),a
+        call io_write;
+        ret
+
+
+    io_write:
+    ; generate short negative pulse on /IOW line of MDA card
+        ld bc,0ffd3h
+        ld a,0eh
+        out (c),a
+        call DELAY ;just in case I/O operations would take too long.
+        ld a,0fh
+        out (c),a
+        ret
+
+    mem_write:
+    ; generate short negative pulse on /MEMW line of MDA card
+        ld bc,0ffd3h
+        ld a,0ah
+        out (c),a
+        ld a,0bh
+        out (c),a
+        ret
+
+
+    line_write:
+    ;Write ASCIIZ buffer to MDA card`s video buffer. Assuming "normal" attribute.
+    ;Entry:
+    ;
+    ; HL = Video RAM position - even address, counted from 0
+    ; IX = Start of ASCIIZ buffer of data
+        ld bc,0ffd0h
+        ld a,l
+        out (c),a
+        ld a,0f0h
+        or h
+        ld bc,0ffd2h
+        out (c),a
+        ld b,0
+        ld a,(ix)
+        cp b
+        ret z
+        ld bc,0ffd1h
+        out (c),a
+        call mem_write 
+        inc hl
+        ld bc,0ffd0h
+        ld a,l
+        out (c),a
+        ld a,0f0h
+        or h
+        ld bc,0ffd2h
+        out (c),a
+        ld bc,0ffd1h
+        ld a,07h    ;normal attribute
+        out (c),a
+        call mem_write;
+
+        ; delay - just for nice looking printout on screen
+        call DELAY
+        call DELAY
+        call DELAY
+        call DELAY
+        call DELAY
+        call DELAY
+        inc hl
+        inc ix
+        jp line_write
+
+    clear_screen:
+    ;Fills the 4K video RAM with zeros
+
+        ld hl,0f9fh
+        
+    continue_clear_screen:
+        ld bc,0ffd0h
+        ld a,l
+        out (c),a
+        ld a,0f0h
+        or h
+        ld bc,0ffd2h
+        out (c),a
+        ld bc,0ffd1h
+        ld a,0             ;attribute
+        out (c),a
+        call mem_write    
+        dec hl
+        ld bc,0ffd0h
+        ld a,l
+        out (c),a
+        ld a,0f0h
+        or h
+        ld bc,0ffd2h
+        out (c),a
+        ld bc,0ffd1h
+        ld a,0            ;empty char
+        out (c),a
+        call mem_write;    
+        ld a,h
+        or l 
+        ret z
+        jp continue_clear_screen;
+
+    ;Fixed 6845 register values - taken from 
+    ;"IBM Monochrome Display and Printer Adapter" 
+    ;Hardware reference manual.
+    init_data:
+    .db 0,0,0,0,0ch,0bh,0dh,02h,19h,19h,06h,19h,0fh,52h,50h,61h    
+
+    ;Example text to be displayed
+    test_string1:
+    .db "Hello! This is MDA display adapter interfacing Z80 CPU! "
+    .db "This is a test program showing how it is possible to use "
+    .db "a standard IBM MDA display adapter with Z80 CPU system. "
+    .db "This is actually a very simple job, as MDA adapters (and also CGA) " 
+    .db "have no BIOSes of their own - there is no need for emulating 80x86 code "
+    .db "In order to set up the card`s chipset before regular use. Using MDA "
+    .db "adapter is as simple as issuing few simple read/write operations to memory "
+    .db "and I/O locations. It would be best to place the card`s interface directly "
+    .db "into memory and I/O space of the Z80 CPU system - this would be rather easy, "
+    .db "as there are just few I/O addressed in use , and 4KB of video RAM. However, "
+    .db "for testing the MDA in my C-Z80 system, I used the most simple solution - "
+    .db "8255 Programmable Peripheral Interface chip. "
+    .db "This chip gives a total of 24 I/O lines, which is just enough to interface "
+    .db "MDA card: we need 12 address lines, 8 bit data lines and 4 control signals. "
+    .db "8255 can privide all of these. In addition we need a positive RESET signal - "
+    .db "taken from 8255 itself, and of course +5V and GND lines. "
+    .db "We assume that there is enough time for I/O and memory operations for MDA card "
+    .db "So there is no checking of I/O CH RDY line for this simple test setup. "
+    .db "It seems the display adapter has it`s own dual port access to video memory "
+    .db "as there is no need for any sync while writing into the video buffer - "
+    .db "there is no flickering or snowing while accessing the VRAM. " 
+    .db "Of course this greatly simplifies the interface design. "
+    .db "The video troughput is acceptable, even with rather complex drive trough "
+    .db "8255, not directly from CPU. Making a real interface with latches and "
+    .db "buffers will icrease the speed even more. I`ll be working on this "
+    .db "solution in near future. When the proper interface is ready, the display "
+    .db "subsystem of C-Z80 computer will be ready for CP/M implementation."
+    .db 0
+
+    .END

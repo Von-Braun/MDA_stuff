@@ -1,0 +1,173 @@
+Registers   description   text mode values   graphics mode values
+================================================================
+R0  = horizontal total          = 61       = 35
+R1  = horizontal displayed      = 50       = 2D
+R2  = horizontal sync position  = 52       = 2E
+R3  = horizontal sync width     = 0F       = 07
+R4  = vertical total            = 19       = 5B
+R5  = vertical total displayed  = 06       = 02
+R6  = vertical displayed        = 19       = 57
+R7  = vertical sync position    = 19       = 57
+R8  = interlace mode            = 02       = 02
+R9  = maximum scan line address = 0D       = 03
+R10 = cursor start              = 0B       = 00
+R11 = cursor end                = 0C       = 00
+R12 = start address(H)          = 00       = 00
+R13 = start address(L)          = 00       = 00
+R14 = cursor(H)                 = 00       = 00
+R15 = cursor(L)                 = 00       = 00
+
+Charecter code/attribute
+========================
+xxxxxxxx = charecter code = even address
+LrgbIRGB = attribute      = odd address
+RGB = foreground
+I   = intensity
+rgb = background 
+L   = blink
+attribute combinations:
+rgb RGB  function
+000 000 = non display
+000 001 = underline
+000 111 = white charecter, black background
+111 000 = reverse video
+
+I/O register address
+====================
+3B0 = not used
+3B1 = not used
+3B2 = not used
+3B3 = not used
+3B4 = 6845 index register
+3B5 = 6845 data register
+3B6 = not used
+3B7 = not used
+3B8 = CRT control port 1
+3B9 = reserved
+3BA = CRT status port
+3BB = reserved
+3BC = parallel data port
+3BD = parallel status port
+3BE = printer control port
+3BF = Graphics mode enable
+
+Graphics mode enable
+====================
+0 = Set to allow graphics mode, clear to disallow it. Also enables access to memory from B1000h to B7FFFh.
+1 = Set to page in the upper 32k of memory at 0B8000h, clear to page it out.
+2-7 = not used
+
+
+CRT control port 1
+==================
+bit function
+0 = +high resolution mode----------
+1 = +grapics mode(0=text)-------
+2 = not used
+3 = +video enable---------------
+4 = not used
+5 = +enable blink
+6 = not used
+7 = Graphics page to display(1, the graphics page at 0B8000h is displayed. Otherwise, the page at 0B0000h is displayed.)
+
+CRT status port
+===============
+bit function
+0 = +horizontal drive
+1 = reserved
+2 = reserved
+3 = +black/white video
+
+Printer port
+============
+Write to port 03BCh: Set data lines.
+Read from port 03BCh: Reads last value sent to printer.
+Read from port 03BDh: Get printer status.
+    Bit 3: ~Error
+    Bit 4: Select
+    Bit 5: Paper out
+    Bit 6: ~Acknowledge
+    Bit 7: Busy
+Bits 2 and 0 always appear to be 1. Bit 1 varies between 0 and 1.
+
+Write to port 03BEh: Set control lines.
+    Bit 0: ~Strobe
+    Bit 1: ~Auto Feed
+    Bit 2: Initialize printer
+    Bit 3: ~Select input
+    Bit 4: Enable interrupt when the printer sets ~Acknowledge to 0.
+Read from port 03BEh: Reads bits 4-0 of last value written. The top 3 bits always appear to be 1,1,1.
+
+
+Initialisation
+==============
+STEPS = {initialize contorl register, set all 16 registers}
+COMMANDS = {set HIGH address,set LOW address,port write,memory write}\
+COMMAND ADDR={00             ,01            ,02        ,03          }
+
+Initialize 6845 CRT controller
+------------------------------
+    ; Seting up control port of 6845 CRT controller on MDA card (address 3b8h)
+    ; According to "IBM Monochrome Display and Prnter Adapter" hardware reference manual
+    ; this must be done before anything else.
+    ; value "29h" means: 
+    ; High resolution mode: ON, Video Enable: ON, Enable Blink: ON
+    ;3b8 = 29h, port write
+    write 03 to 00   //set high to 03
+    write B8 to 01   //set low to B8
+    write 29 to 02   //write 29 to port reg
+
+
+Bulk initialization of 6845 CRT controller`s registers
+------------------------------------------------------
+    ; 16 registers has to be initialised with fixed values
+    ; recommended by IBM`s hadware manual for MDA card.
+    ; Registers are selected by "Index Register" (3b4h)
+    ; Values are entered to "Data Register" (3b5h)
+    init_data = [00,00,00,00,0c,0b,0d,02,19,19,06,19,0f,52,50,61]  //initialize registers
+    register_address = 0f
+    for register_value in init_data:
+
+        write 03 to 00                 //port write register address to 03B4(index register)
+        write B4 to 01
+        write register_address to 02
+
+        write 03 to 00                 //port write register value to 03B5(data register)
+        write B5 to 01
+        write register_value to 02
+
+        register_address-=1
+        
+
+write character
+===============
+STEPS = {write charecter, write attribute}
+COMMANDS = {set HIGH address,set LOW address,port write,memory write}\
+COMMAND ADDR={00             ,01            ,02        ,03          }
+
+write charecter
+---------------
+    ;Write ASCIIZ buffer to MDA card`s video buffer. Assuming "normal" attribute.
+    ;Entry:
+    ;
+    ; HL = Video RAM position, 16 bit, counted from 0
+    write H to 00                 //memory write ASCII value to Video RAM position
+    write L to 01
+    write ASCII_value to 03
+    HL+=1
+
+write attribute
+---------------
+    write H to 00                 //memory write normal attribute to Video RAM position
+    write L to 01
+    write 07 to 03      //07 = normal attribute
+
+clear screen
+============
+    ;fill the screen with character 0 with attribute 0
+    HL = 0f9f
+    repeat until HL==0:
+        write attribute 0
+        HL-=1
+        write charecter 0
+
