@@ -1,0 +1,189 @@
+//Printer port LED test
+//PORTA=Low address
+//PORTC=High address
+//PORTL=data
+int resetPin = 51; 
+int IOWPin = 52; 
+int MEMWPin = 53; 
+int MEM_delay = 0;
+int IOW_delay = 0;
+int erase_delay = 0;
+byte high_address=0x00;
+byte low_address=0x00;
+int high = 0;
+int low = 0;
+int started_already = 0;
+int blockcount=0;
+int row = 0;
+int column = 0;
+int array_address=0;
+int serial_offset=0;
+int modepin=A0;
+      
+void setup() {
+  DDRA = B11111111;  // sets Arduino pins 22 to 29 as outputs 0-7
+  DDRC = B11111111;  // sets Arduino pins 30 to 37 as outputs 7-0
+  DDRL = B11111111;  // sets Arduino pins 42 to 49 as outputs 7-0
+  pinMode(resetPin, OUTPUT);      // sets the digital pin as output
+  pinMode(IOWPin, OUTPUT);      // sets the digital pin as output
+  pinMode(MEMWPin, OUTPUT);      // sets the digital pin as output
+  pinMode(modepin, INPUT);
+  digitalWrite(IOWPin, HIGH);
+  digitalWrite(MEMWPin, HIGH);
+  digitalWrite(resetPin, HIGH);
+  digitalWrite(resetPin, LOW); 
+  if (digitalRead(modepin) == HIGH){
+    serial_offset=1;
+    Serial.begin(2000000);
+    Serial.setTimeout(10);
+  }else{
+    Serial.begin(115200);
+    Serial.setTimeout(3);
+  }
+  initialize_monitor(serial_offset);
+  erase_screen();
+  if (serial_offset==0){write_text("NO DATA!",0,0);}
+  
+  
+}
+
+void IOW(byte high_address,byte low_address,byte data){
+  PORTA = low_address; // digital 4~7 HIGH, digital 3~0 LOW
+  PORTC = high_address; // digital 4~7 LOW, digital 3~0 HIGH
+  PORTL = data; // digital 4~7 LOW, digital 3~0 HIGH
+  delay(IOW_delay);
+  digitalWrite(IOWPin, LOW);
+  digitalWrite(IOWPin, HIGH);
+}
+
+void MEMW(byte high_address,byte low_address,byte data){
+  PORTA = low_address; // digital 4~7 HIGH, digital 3~0 LOW
+  PORTC = high_address; // digital 4~7 LOW, digital 3~0 HIGH
+  PORTL = data; // digital 4~7 LOW, digital 3~0 HIGH
+  delay(MEM_delay);
+  digitalWrite(MEMWPin, LOW);
+  digitalWrite(MEMWPin, HIGH);
+}
+
+void MEMWE(byte high_address,byte low_address){               //used in erase_screen(), has lower delay
+  PORTA = low_address; // digital 4~7 HIGH, digital 3~0 LOW
+  PORTC = high_address; // digital 4~7 LOW, digital 3~0 HIGH
+  PORTL = 0x00; // digital 4~7 LOW, digital 3~0 HIGH
+  delay(erase_delay);
+  digitalWrite(MEMWPin, LOW);
+  digitalWrite(MEMWPin, HIGH);
+}
+
+void erase_screen(){    //clears screen by filling memory with 00
+  for (int high_address = 0x00; high_address <= 0xFF; ++high_address){
+     for (int low_address = 0x00; low_address <= 0xFF; ++low_address){
+      MEMWE(high_address,low_address);}}
+}
+
+/* 6485 controller mode data */
+char hgcdat[2][16] = {
+    { 0x61, 0x50, 0x52, 0x0f, 0x19, 0x06,
+      0x19, 0x19, 0x02, 0x0d, 0x0b, 0x0c, 0x00 ,0x00, 0xFF ,0x00  }, //the 0xFF removes the cursor, 0x00 restores it.
+    { 0x35, 0x2d, 0x2e, 0x07, 0x5b, 0x02,
+      0x57, 0x57, 0x02, 0x03, 0x00 ,0x00, 0x00 ,0x00, 0x00 ,0x00  }
+};
+
+/* set mode:  0 = text,  1 = graphics */
+void initialize_monitor(int ctrlmode){
+   unsigned int reg,ctrl;
+   ctrl = (ctrlmode) ? 0x03 : 0x01;
+   IOW(0x03,0xBF,ctrlmode);     /* allow graphics enable page 0 */
+   IOW(0x03,0xB8,ctrl);  /* disable video and set mode   */
+   for (reg = 0; reg <= 15; reg++) {
+                      /* program the crt parameters   */
+        IOW(0x03,0xB4,reg);
+        IOW(0x03,0xB5,hgcdat[ctrlmode][reg]);
+        }
+   IOW(0x03,0xB8,ctrl+8);  /* re-enable the video        */
+}
+void write_graphics_byte(int x,int y,byte c){
+  //x(0 -> 90), y(0 -> 348)
+  word byte_location = ((y&3)<<13)+(y>>2)*90+x;
+  high_address = highByte(byte_location);
+  low_address = lowByte(byte_location);
+  MEMW(high_address,low_address ,c);
+}
+
+void write_text(String text, int provided_row, int provided_column){
+  int array_address = 0;
+
+  int value = 0;
+  int start=1;
+  value+=(provided_column*2);
+  value+=(provided_row*160);
+
+  for (int high_address = 0x00; high_address <= 0x0F; ++high_address){
+    for (int low_address = 0x00; low_address <= 0xFF; ++low_address){
+      if (start==1){
+        high_address = highByte(value);
+        low_address = lowByte(value);
+        start=0;
+      }
+      if ((("%02X",text[array_address])==0x0a)){// && (("%02X",text[array_address+1])==0x6E)){ //"\n" detected
+        value=word(high_address, low_address);
+        row = value/160;
+        value = 160;
+        value+=(row*160);
+        
+         high_address = highByte(value);
+         low_address = lowByte(value);
+         array_address++;
+         low_address--;
+      }else if ((("%02X",text[array_address])==0x0d)){// && (("%02X",text[array_address+1])==0x72)){  //"\r" detected
+        value=word(high_address, low_address);
+        row = value/160;
+        value=(row*160);
+        high_address = highByte(value);
+         low_address = lowByte(value);
+         array_address++;
+         low_address--;
+      }else{
+      MEMW(high_address,low_address ,("%02X",text[array_address]));
+      array_address++;
+      low_address++;
+      MEMW(high_address,low_address ,0x07);
+      }
+      
+      if (("%02X",text[array_address])==0x00){
+        value = word(high_address, low_address)+1;
+        column = (value%160)/2;
+        row = value/160;
+        break;}}
+    if (("%02X",text[array_address])==0x00){break;}}
+}
+
+void read_text(){
+  while(!Serial.available());
+  String string_received = Serial.readStringUntil(0x00);
+  string_received.setCharAt(string_received.length() - 1, '\0');
+  write_text(string_received,0,0);
+}
+
+void read_image(){
+  if (started_already!=1){high=0; low=0;}
+  if (Serial.available() > 0) {
+    byte inputBuffer[7830]; 
+    Serial.readBytes(inputBuffer,7830);
+    started_already=1; blockcount++;
+    if (blockcount==4){started_already=0; blockcount=0;}
+    for (int i = 0; i < 7830; i++){
+      write_graphics_byte(high,low,inputBuffer[i]);
+      high++;
+      if (high==90){low++; high=0;}}
+  }
+}
+
+void loop() {
+
+if (serial_offset==0){
+  read_text();
+}else{
+ read_image();
+}
+
+}
